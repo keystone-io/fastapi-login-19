@@ -1,7 +1,11 @@
-from fastapi import FastAPI, Depends, HTTPException
-from sqlalchemy import create_engine, Column, String
+from fastapi import FastAPI, Depends, HTTPException, Query, Response, UploadFile, File
+from sqlalchemy import (create_engine, Column, String, BigInteger, Text, DateTime, ForeignKey,
+                        JSON, func)
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import declarative_base, Session
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field, HttpUrl, StringConstraints
+from typing import Annotated, Literal
 from supabase import create_client, ClientOptions, AuthError
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.responses import FileResponse, RedirectResponse
@@ -13,6 +17,7 @@ import json
 import os
 import secrets
 import time
+import uuid
 import httpx  # supabase 가 쓰는 HTTP 라이브러리 (카카오 토큰 요청용)
 
 # [수정] DB 주소·Supabase 키를 코드에 쓰지 않고 .env 에서 읽는다
@@ -50,6 +55,42 @@ class EmailForm(BaseModel):
     #        Supabase 에 보내기 전에 FastAPI 가 422 로 거부 (email-validator 패키지 필요)
     email: EmailStr
     password: str
+
+# [추가] 게시판 테이블 — Supabase 에는 CLI 마이그레이션으로 만들었다
+#   supabase/migrations/20261118042817_create_posts.sql  (여기 모델은 그 테이블을 읽고 쓰는 용도)
+class Post(Base):
+    __tablename__ = "posts"
+    id = Column(BigInteger, primary_key=True)  # DB 가 1, 2, 3 … 자동 번호
+    author_id = Column(String(50), ForeignKey("profiles.id", ondelete="CASCADE"), nullable=False, index=True)
+    category = Column(String(20), nullable=False, default="토론")
+    title = Column(String(200), nullable=False)
+    content = Column(Text, nullable=False)
+    tags = Column(JSON().with_variant(JSONB, "postgresql"), nullable=False, default=list)
+    image_url = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+class PostLike(Base):
+    __tablename__ = "post_likes"
+    post_id = Column(BigInteger, ForeignKey("posts.id", ondelete="CASCADE"), primary_key=True)
+    user_id = Column(String(50), ForeignKey("profiles.id", ondelete="CASCADE"), primary_key=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+# 글 분류 (화면 위쪽 카테고리 탭과 같은 목록)
+CATEGORIES = ("시민질문", "뉴스", "소식", "캠페인", "토론", "팩트체크", "모임")
+
+# 앞뒤 공백을 지우고, 비어 있으면 422
+Title = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]
+Content = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=20000)]
+Tag = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=20)]
+
+class PostForm(BaseModel):
+    category: Literal[CATEGORIES] = "토론"
+    title: Title
+    content: Content
+    tags: list[Tag] = Field(default_factory=list, max_length=5)  # 태그는 최대 5개
+    # http(s) 주소만 허용 (javascript: 같은 주소로 화면을 공격하지 못하게)
+    image_url: HttpUrl | None = None
 
 # 테이블이 없으면 생성
 Base.metadata.create_all(bind=engine)
@@ -160,26 +201,270 @@ def check_username(username: str, db: Session = Depends(get_db)):
 # 요청 헤더 "Authorization: Bearer <토큰>" 에서 토큰을 꺼내 주는 도구
 # (/docs 오른쪽 위에 Authorize 버튼이 생긴다)
 bearer = HTTPBearer()
+# 토큰이 없어도 되는 API 용 (글 목록: 비회원도 보고, 로그인했으면 '내가 누른 좋아요' 표시)
+optional_bearer = HTTPBearer(auto_error=False)
 
-# 내 정보 — 토큰으로 누구인지 확인 (로그인한 사람만 사용 가능)
-@app.get("/me")
-def me(cred: HTTPAuthorizationCredentials = Depends(bearer), db: Session = Depends(get_db)):
+# [수정] 토큰 → 로그인한 회원(profiles 한 줄). /me 와 게시판 글쓰기·수정·삭제에서 같이 쓴다
+def get_current_profile(cred: HTTPAuthorizationCredentials = Depends(bearer),
+                        db: Session = Depends(get_db)) -> Profile:
     try:
         user = supabase.auth.get_user(cred.credentials).user
     except AuthError:
         raise HTTPException(status_code=401, detail="토큰이 잘못되었습니다.")
 
     profile = db.get(Profile, user.id)
-
     if profile is None:
         # [수정] 안내 문구: 토큰은 맞는데 profiles 에 정보가 없는 경우
         raise HTTPException(status_code=404, detail="프로필 정보가 없습니다.")
+    return profile
 
+def get_optional_profile(cred: HTTPAuthorizationCredentials | None = Depends(optional_bearer),
+                         db: Session = Depends(get_db)) -> Profile | None:
+    if cred is None:
+        return None
+    try:
+        user = supabase.auth.get_user(cred.credentials).user
+    except AuthError:
+        return None  # 만료된 토큰이어도 글 목록은 보여 준다
+    return db.get(Profile, user.id)
+
+# 내 정보 — 토큰으로 누구인지 확인 (로그인한 사람만 사용 가능)
+@app.get("/me")
+def me(profile: Profile = Depends(get_current_profile)):
     return {
         "id": profile.id,
         "username": profile.username,
         "email": profile.email,
         "provider": profile.provider
+    }
+
+# ─────────────────────────────────────────────────────────────
+# [추가] 게시판(토론) CRUD
+# ─────────────────────────────────────────────────────────────
+#   GET    /posts?category=토론&page=1   목록 (누구나)
+#   GET    /posts/{id}                   글 보기 (누구나)
+#   POST   /posts                        글쓰기 (로그인)
+#   PUT    /posts/{id}                   수정 (작성자만)
+#   DELETE /posts/{id}                   삭제 (작성자만)
+#   POST   /posts/{id}/like              좋아요 누르기/취소 (로그인)
+EXCERPT_LENGTH = 150
+
+def clean_tags(tags: list[str]) -> list[str]:
+    """'#AI', 'AI' 처럼 같은 태그가 두 번 들어오면 하나만 남긴다"""
+    result = []
+    for tag in tags:
+        tag = tag.lstrip("#").strip()
+        if tag and tag not in result:
+            result.append(tag)
+    return result
+
+def like_info(db: Session, post_ids: list[int], viewer: Profile | None):
+    """글마다 좋아요 수와, 보는 사람이 눌렀는지 여부"""
+    if not post_ids:
+        return {}, set()
+    counts = dict(
+        db.query(PostLike.post_id, func.count())
+        .filter(PostLike.post_id.in_(post_ids))
+        .group_by(PostLike.post_id)
+        .all()
+    )
+    liked = set()
+    if viewer is not None:
+        liked = {row[0] for row in db.query(PostLike.post_id)
+                 .filter(PostLike.post_id.in_(post_ids), PostLike.user_id == viewer.id)}
+    return counts, liked
+
+def post_to_dict(post: Post, author: Profile, like_count: int, liked: bool,
+                 viewer: Profile | None, full: bool = False):
+    data = {
+        "id": post.id,
+        "category": post.category,
+        "title": post.title,
+        "tags": post.tags or [],
+        "image_url": post.image_url,
+        "created_at": post.created_at,
+        "updated_at": post.updated_at,
+        "author": {"id": author.id, "username": author.username, "provider": author.provider},
+        "like_count": like_count,
+        "liked": liked,
+        "is_mine": viewer is not None and viewer.id == post.author_id,
+    }
+    if full:
+        data["content"] = post.content
+    else:
+        # 목록에는 앞부분만 (줄바꿈은 공백으로)
+        text = " ".join(post.content.split())
+        data["excerpt"] = text[:EXCERPT_LENGTH] + ("…" if len(text) > EXCERPT_LENGTH else "")
+    return data
+
+def find_post(db: Session, post_id: int) -> Post:
+    post = db.get(Post, post_id)
+    if post is None:
+        raise HTTPException(status_code=404, detail="글을 찾을 수 없습니다.")
+    return post
+
+def check_owner(post: Post, profile: Profile):
+    if post.author_id != profile.id:
+        raise HTTPException(status_code=403, detail="작성자만 수정·삭제할 수 있습니다.")
+
+@app.get("/posts")
+def list_posts(category: Literal[CATEGORIES] | None = None,
+               mine: bool = False,
+               page: int = Query(1, ge=1),
+               size: int = Query(12, ge=1, le=50),
+               viewer: Profile | None = Depends(get_optional_profile),
+               db: Session = Depends(get_db)):
+    query = db.query(Post, Profile).join(Profile, Post.author_id == Profile.id)
+    if category:
+        query = query.filter(Post.category == category)
+    if mine:
+        if viewer is None:
+            raise HTTPException(status_code=401, detail="로그인이 필요합니다.")
+        query = query.filter(Post.author_id == viewer.id)
+
+    total = query.count()
+    rows = (query.order_by(Post.created_at.desc(), Post.id.desc())
+            .offset((page - 1) * size).limit(size).all())
+    counts, liked = like_info(db, [post.id for post, _ in rows], viewer)
+    return {
+        "items": [post_to_dict(post, author, counts.get(post.id, 0), post.id in liked, viewer)
+                  for post, author in rows],
+        "total": total,
+        "page": page,
+        "size": size,
+    }
+
+@app.get("/posts/{post_id}")
+def read_post(post_id: int,
+              viewer: Profile | None = Depends(get_optional_profile),
+              db: Session = Depends(get_db)):
+    post = find_post(db, post_id)
+    author = db.get(Profile, post.author_id)
+    counts, liked = like_info(db, [post.id], viewer)
+    return post_to_dict(post, author, counts.get(post.id, 0), post.id in liked, viewer, full=True)
+
+@app.post("/posts", status_code=201)
+def create_post(form: PostForm,
+                profile: Profile = Depends(get_current_profile),
+                db: Session = Depends(get_db)):
+    post = Post(
+        author_id=profile.id,
+        category=form.category,
+        title=form.title,
+        content=form.content,
+        tags=clean_tags(form.tags),
+        image_url=str(form.image_url) if form.image_url else None,
+    )
+    db.add(post)
+    db.commit()
+    db.refresh(post)
+    return post_to_dict(post, profile, 0, False, profile, full=True)
+
+@app.put("/posts/{post_id}")
+def update_post(post_id: int, form: PostForm,
+                profile: Profile = Depends(get_current_profile),
+                db: Session = Depends(get_db)):
+    post = find_post(db, post_id)
+    check_owner(post, profile)
+    post.category = form.category
+    post.title = form.title
+    post.content = form.content
+    post.tags = clean_tags(form.tags)
+    post.image_url = str(form.image_url) if form.image_url else None
+    post.updated_at = func.now()
+    db.commit()
+    db.refresh(post)
+    counts, liked = like_info(db, [post.id], profile)
+    return post_to_dict(post, profile, counts.get(post.id, 0), post.id in liked, profile, full=True)
+
+@app.delete("/posts/{post_id}", status_code=204)
+def delete_post(post_id: int,
+                profile: Profile = Depends(get_current_profile),
+                db: Session = Depends(get_db)):
+    post = find_post(db, post_id)
+    check_owner(post, profile)
+    db.delete(post)  # 좋아요는 DB 의 on delete cascade 로 함께 지워진다
+    db.commit()
+    return Response(status_code=204)
+
+@app.post("/posts/{post_id}/like")
+def toggle_like(post_id: int,
+                profile: Profile = Depends(get_current_profile),
+                db: Session = Depends(get_db)):
+    find_post(db, post_id)
+    like = db.get(PostLike, (post_id, profile.id))
+    if like is None:
+        db.add(PostLike(post_id=post_id, user_id=profile.id))
+    else:
+        db.delete(like)
+    try:
+        db.commit()
+    except IntegrityError:  # 버튼을 아주 빠르게 두 번 누른 경우
+        db.rollback()
+    counts, liked = like_info(db, [post_id], profile)
+    return {"like_count": counts.get(post_id, 0), "liked": post_id in liked}
+
+# ─────────────────────────────────────────────────────────────
+# [추가] 대표 이미지 업로드 → Supabase Storage
+# ─────────────────────────────────────────────────────────────
+#   React [이미지 선택] → POST /uploads/image (파일 + 토큰)
+#   → FastAPI: 로그인 확인 · 진짜 이미지인지 · 5MB 이하인지 확인
+#   → Supabase Storage 에 "그 회원의 토큰"으로 업로드 (버킷 정책: 자기 id 폴더에만 허용)
+#   → 공개 주소(URL)를 돌려줌 → 글 저장 때 image_url 로 보낸다
+# 버킷·정책은 supabase/migrations/20261118044307_create_post_images_bucket.sql
+IMAGE_BUCKET = "post-images"
+MAX_IMAGE_BYTES = 5 * 1024 * 1024
+IMAGE_EXT = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/gif": "gif"}
+
+def sniff_image_type(data: bytes) -> str | None:
+    """파일 이름·브라우저가 알려 준 종류는 바꿀 수 있으므로, 파일 첫 부분(서명)을 직접 보고 판단"""
+    if data.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+    if data[:6] in (b"GIF87a", b"GIF89a"):
+        return "image/gif"
+    return None
+
+@app.post("/uploads/image", status_code=201)
+def upload_image(file: UploadFile = File(...),
+                 cred: HTTPAuthorizationCredentials = Depends(bearer),
+                 profile: Profile = Depends(get_current_profile)):
+    data = file.file.read(MAX_IMAGE_BYTES + 1)  # 한도보다 1바이트만 더 읽어 초과 여부 판단
+    if len(data) > MAX_IMAGE_BYTES:
+        raise HTTPException(status_code=413, detail="이미지는 5MB 이하만 올릴 수 있습니다.")
+    content_type = sniff_image_type(data)
+    if content_type is None:
+        raise HTTPException(status_code=400, detail="jpg, png, webp, gif 이미지만 올릴 수 있습니다.")
+
+    # 파일 이름은 새로 만든다 (원래 이름의 한글·특수문자·겹침 문제를 피함)
+    path = f"{profile.id}/{uuid.uuid4().hex}.{IMAGE_EXT[content_type]}"
+    try:
+        r = httpx.post(
+            f"{SUPABASE_URL}/storage/v1/object/{IMAGE_BUCKET}/{path}",
+            content=data,
+            headers={
+                "apikey": SUPABASE_KEY,
+                "Authorization": f"Bearer {cred.credentials}",  # 회원 본인 권한으로 업로드
+                "Content-Type": content_type,
+                "x-upsert": "false",
+            },
+            timeout=30,
+        )
+    except httpx.HTTPError:
+        raise HTTPException(status_code=502, detail="Supabase Storage 에 연결하지 못했습니다.")
+    if r.status_code not in (200, 201):
+        try:
+            message = r.json().get("message") or r.text
+        except ValueError:
+            message = r.text
+        raise HTTPException(status_code=502, detail=f"이미지 업로드 실패: {message}")
+
+    return {
+        "path": path,
+        "url": f"{SUPABASE_URL}/storage/v1/object/public/{IMAGE_BUCKET}/{path}",
     }
 
 # ─────────────────────────────────────────────────────────────
