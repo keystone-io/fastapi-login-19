@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>로그인 테스트</title>
+<style>
+  body { font-family: system-ui, "Malgun Gothic", sans-serif; background: #f4f5f7; margin: 0; padding: 24px 16px; color: #222; }
+  .wrap { max-width: 520px; margin: 0 auto; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  .sub { color: #666; font-size: 14px; margin-bottom: 20px; }
+  .card { background: #fff; border-radius: 10px; padding: 18px; margin-bottom: 16px; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+  .card h2 { font-size: 16px; margin: 0 0 12px; }
+  .step { display: inline-block; background: #222; color: #fff; border-radius: 50%; width: 22px; height: 22px; text-align: center; line-height: 22px; font-size: 13px; margin-right: 6px; }
+  input { width: 100%; box-sizing: border-box; padding: 10px; margin-bottom: 8px; border: 1px solid #ccc; border-radius: 6px; font-size: 15px; }
+  button { padding: 10px 14px; border: 0; border-radius: 6px; font-size: 15px; cursor: pointer; background: #2563eb; color: #fff; margin-right: 6px; margin-bottom: 6px; }
+  button.gray { background: #6b7280; }
+  .result { margin-top: 10px; padding: 12px; border-radius: 6px; font-size: 14px; white-space: pre-wrap; word-break: break-all; display: none; }
+  .ok { display: block; background: #e7f7ec; border: 1px solid #34a853; }
+  .fail { display: block; background: #fdecea; border: 1px solid #d93025; }
+  .status { font-size: 15px; padding: 10px 12px; border-radius: 6px; background: #eef1f5; }
+  code { background: #eef1f5; padding: 1px 4px; border-radius: 4px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>로그인 테스트</h1>
+  <div class="sub">FastAPI(<code>/signup</code>, <code>/login</code>, <code>/me</code>)를 버튼으로 호출해 결과를 보는 연습용 화면</div>
+
+  <div class="card">
+    <div class="status" id="status">현재 상태: 로그아웃 (토큰 없음)</div>
+  </div>
+
+  <div class="card">
+    <h2><span class="step">1</span>회원가입 <small>(이미 가입했으면 건너뛰기)</small></h2>
+    <input id="su-username" placeholder="username (예: 홍길동)">
+    <input id="su-email" placeholder="이메일 (예: test2@example.com)">
+    <input id="su-password" type="password" placeholder="비밀번호 (6자 이상)">
+    <button onclick="signup()">회원가입</button>
+    <div class="result" id="su-result"></div>
+  </div>
+
+  <div class="card">
+    <h2><span class="step">2</span>로그인</h2>
+    <input id="li-email" placeholder="이메일" value="apple@naver.com">
+    <input id="li-password" type="password" placeholder="비밀번호">
+    <button onclick="login()">로그인</button>
+    <button class="gray" onclick="logout()">로그아웃 (토큰 버리기)</button>
+    <div class="result" id="li-result"></div>
+  </div>
+
+  <div class="card">
+    <h2><span class="step">3</span>내 정보 보기 (<code>/me</code>)</h2>
+    <div class="sub" style="margin-bottom:10px">로그인했으면 토큰을 붙여 보내서 성공, 안 했으면 실패하는 것을 확인</div>
+    <button onclick="me()">내 정보 보기</button>
+    <div class="result" id="me-result"></div>
+  </div>
+</div>
+
+<script>
+  // 로그인하면 받은 토큰(출입증)을 여기에 보관한다 (새로고침하면 사라짐)
+  let token = null;
+
+  function show(id, ok, text) {
+    const el = document.getElementById(id);
+    el.className = "result " + (ok ? "ok" : "fail");
+    el.textContent = text;
+  }
+
+  function updateStatus() {
+    document.getElementById("status").textContent = token
+      ? "현재 상태: 로그인됨 (토큰 보관 중: " + token.slice(0, 15) + "… " + token.length + "자)"
+      : "현재 상태: 로그아웃 (토큰 없음)";
+  }
+
+  // FastAPI 오류 응답(detail)을 읽기 쉬운 문장으로
+  function errorText(data) {
+    if (typeof data.detail === "string") return data.detail;
+    if (Array.isArray(data.detail)) return data.detail.map(d => d.msg).join("\n");
+    return JSON.stringify(data);
+  }
+
+  async function call(method, url, body, useToken) {
+    const headers = { "Content-Type": "application/json" };
+    if (useToken && token) headers["Authorization"] = "Bearer " + token;
+    const res = await fetch(url, { method, headers, body: body ? JSON.stringify(body) : undefined });
+    return { code: res.status, data: await res.json() };
+  }
+
+  async function signup() {
+    const { code, data } = await call("POST", "/signup", {
+      username: document.getElementById("su-username").value,
+      email: document.getElementById("su-email").value,
+      password: document.getElementById("su-password").value,
+    });
+    if (code === 200) {
+      show("su-result", true, `✅ 가입 성공 (${code})\nusername: ${data.username}\nemail: ${data.email}\nid: ${data.id}`);
+    } else {
+      show("su-result", false, `❌ 가입 실패 (${code})\n${errorText(data)}`);
+    }
+  }
+
+  async function login() {
+    const { code, data } = await call("POST", "/login", {
+      email: document.getElementById("li-email").value,
+      password: document.getElementById("li-password").value,
+    });
+    if (code === 200) {
+      token = data.access_token;
+      show("li-result", true, `✅ 로그인 성공 (${code})\n토큰(출입증)을 받아서 보관했습니다.\n이제 3번 '내 정보 보기'를 눌러 보세요.`);
+    } else {
+      token = null;
+      show("li-result", false, `❌ 로그인 실패 (${code})\n${errorText(data)}`);
+    }
+    updateStatus();
+  }
+
+  function logout() {
+    token = null;
+    show("li-result", true, "토큰을 버렸습니다. 이제 '내 정보 보기'는 실패해야 정상입니다.");
+    updateStatus();
+  }
+
+  async function me() {
+    const { code, data } = await call("GET", "/me", null, true);
+    if (code === 200) {
+      show("me-result", true, `✅ 성공 (${code}) — 토큰으로 누구인지 확인됨\nusername: ${data.username}\nemail: ${data.email}\nprovider: ${data.provider}`);
+    } else {
+      show("me-result", false, `❌ 실패 (${code}) — ${errorText(data)}\n` + (token ? "토큰이 잘못됐거나 만료됨 → 다시 로그인" : "토큰이 없음 → 먼저 2번에서 로그인"));
+    }
+  }
+</script>
+</body>
+</html>

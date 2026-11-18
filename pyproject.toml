@@ -1,0 +1,32 @@
+[project]
+name = "fastapi-login-19"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "himzei", email = "himzei@gmail.com" }
+]
+requires-python = ">=3.13"
+dependencies = [
+    "email-validator>=2.4.0",
+    "fastapi>=0.163.1",
+    "psycopg>=3.3.9",
+    "psycopg-binary>=3.3.9",
+    "psycopg2-binary>=2.9.13",
+    "python-dotenv>=1.2.4",
+    "sqlalchemy>=2.1.8",
+    "supabase>=2.34.1",
+    "uvicorn>=0.54.0",
+]
+
+[project.scripts]
+fastapi-login-19 = "fastapi_login_19:main"
+
+[build-system]
+requires = ["uv_build>=0.13.7,<0.14.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "httpx>=0.28.1",
+]
