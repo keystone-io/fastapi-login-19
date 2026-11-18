@@ -246,6 +246,7 @@ source = { editable = "." }
 dependencies = [
     { name = "email-validator" },
     { name = "fastapi" },
+    { name = "httpx" },
     { name = "psycopg" },
     { name = "psycopg-binary" },
     { name = "psycopg2-binary" },
@@ -264,6 +265,7 @@ dev = [
 requires-dist = [
     { name = "email-validator", specifier = ">=2.4.0" },
     { name = "fastapi", specifier = ">=0.163.1" },
+    { name = "httpx", specifier = ">=0.28.1" },
     { name = "psycopg", specifier = ">=3.3.9" },
     { name = "psycopg-binary", specifier = ">=3.3.9" },
     { name = "psycopg2-binary", specifier = ">=2.9.13" },

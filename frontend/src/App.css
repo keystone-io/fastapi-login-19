@@ -1,0 +1,270 @@
+.page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 16px;
+  box-sizing: border-box;
+}
+
+.card {
+  width: 100%;
+  max-width: 400px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 28px 24px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.06);
+  box-sizing: border-box;
+}
+
+/* 탭 (로그인 | 회원가입) */
+.tabs {
+  display: flex;
+  gap: 4px;
+  margin: -8px 0 22px;
+  padding: 4px;
+  border-radius: 10px;
+  background: var(--bg);
+}
+
+.tabs .tab {
+  flex: 1;
+  margin: 0;
+  padding: 9px;
+  font-size: 15px;
+  font-weight: 600;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text);
+}
+
+.tabs .tab.active {
+  background: var(--card);
+  color: var(--text-h);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.notice {
+  margin: -8px 0 16px;
+  padding: 10px 12px;
+  font-size: 14px;
+  border-radius: 8px;
+  color: var(--text-h);
+  background: var(--notice-bg);
+}
+
+.card h1 {
+  margin: 0 0 4px;
+  font-size: 24px;
+  color: var(--text-h);
+}
+
+.sub {
+  margin: 0 0 20px;
+  font-size: 14px;
+  color: var(--text);
+}
+
+label {
+  display: block;
+  margin-bottom: 14px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-h);
+}
+
+/* label 과 입력칸을 따로 두는 칸 (username 처럼 옆에 버튼이 붙는 경우) */
+.field {
+  margin-bottom: 14px;
+}
+
+.field > label {
+  margin-bottom: 0;
+}
+
+/* 1행 2열: 입력칸은 남는 너비 전부, 버튼은 글자 너비만큼 */
+.input-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.input-row input {
+  margin-top: 0;
+}
+
+.input-row .check-btn {
+  width: auto;
+  margin: 0;
+  padding: 0 16px;
+  font-size: 14px;
+  white-space: nowrap;
+  background: transparent;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+}
+
+input {
+  display: block;
+  width: 100%;
+  margin-top: 6px;
+  padding: 11px 12px;
+  font-size: 15px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text-h);
+  box-sizing: border-box;
+}
+
+input:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+  border-color: transparent;
+}
+
+/* 실시간 확인: 맞으면 초록, 틀리면 빨강 */
+input.is-ok,
+input.is-ok:focus {
+  border-color: var(--ok);
+  outline-color: var(--ok);
+}
+
+input.is-bad,
+input.is-bad:focus {
+  border-color: var(--error);
+  outline-color: var(--error);
+}
+
+.hint {
+  display: block;
+  margin-top: 6px;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.hint.is-ok {
+  color: var(--ok);
+}
+
+.hint.is-bad {
+  color: var(--error);
+}
+
+button {
+  width: 100%;
+  padding: 12px;
+  margin-top: 6px;
+  font-size: 16px;
+  font-weight: 600;
+  border: 0;
+  border-radius: 8px;
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+button + button {
+  margin-top: 10px;
+}
+
+button.secondary {
+  background: transparent;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+}
+
+.error {
+  margin: 4px 0 10px;
+  padding: 10px 12px;
+  font-size: 14px;
+  white-space: pre-line;
+  border-radius: 8px;
+  color: var(--error);
+  background: var(--error-bg);
+}
+
+.info {
+  display: grid;
+  grid-template-columns: 80px 1fr;
+  gap: 8px 12px;
+  margin: 0 0 20px;
+  font-size: 14px;
+}
+
+.info dt {
+  color: var(--text);
+}
+
+.info dd {
+  margin: 0;
+  color: var(--text-h);
+  word-break: break-all;
+}
+
+.mono {
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+/* 구분선: ──── 또는 ──── */
+.divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 22px 0 16px;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.divider::before,
+.divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+
+/* 소셜 로그인 버튼 */
+.social-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 0;
+  font-weight: 600;
+}
+
+.social-btn + .social-btn {
+  margin-top: 10px;
+}
+
+.social-icon {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+}
+
+/* 카카오: 노란 배경 + 검은 글씨 (카카오 디자인 가이드 색) */
+.social-btn.kakao {
+  background: #fee500;
+  color: rgba(0, 0, 0, 0.85);
+}
+
+/* 구글: 흰 배경 + 회색 테두리 */
+.social-btn.google {
+  background: #fff;
+  color: #1f1f1f;
+  border: 1px solid #dadce0;
+}
+
+.social-notice {
+  margin: 12px 0 0;
+}
